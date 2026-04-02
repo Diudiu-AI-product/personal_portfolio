@@ -30,7 +30,7 @@ const Hero = () => {
         >
           Hi, I'm{' '}
           <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-purple-400 animate-gradient">
-            Developer
+            Diudiu
           </span>
         </motion.h1>
 
@@ -41,7 +41,7 @@ const Hero = () => {
           transition={{ duration: 0.6, delay: 0.4 }}
           className="text-xl md:text-2xl text-gray-300 max-w-3xl mx-auto mb-12"
         >
-          A passionate <span className="text-purple-300">full-stack developer</span> creating beautiful and functional web applications with modern technologies.
+          一位热爱AI的产品经理
         </motion.p>
 
         {/* Call-to-action buttons */}

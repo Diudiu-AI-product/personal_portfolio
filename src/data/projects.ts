@@ -1,66 +1,81 @@
+export interface PrototypeImage {
+  id: string;           // UUID
+  url: string;          // 原始图片URL（模拟）
+  thumbnailUrl: string; // 缩略图URL (200x200)（模拟）
+  previewUrl: string;   // 预览图URL (800x600)（模拟）
+  originalName: string; // 原始文件名
+  size: number;         // 文件大小(bytes)
+  mimeType: string;     // 文件类型
+  uploadOrder: number;  // 上传顺序
+}
+
 export interface Project {
   id: number;
   name: string;
+  stack: string[];
   description: string;
-  techStack: string[];
-  demoLink: string;
-  githubLink: string;
-  emoji: string;
+  demoUrl: string;
+  type: 'embed' | 'link' | 'prototype';  // 新增prototype类型
+  images?: PrototypeImage[];             // 新增：原型图图片数组
+  thumbnail?: string;                    // 新增：首张图片缩略图URL
 }
 
 export const projects: Project[] = [
   {
     id: 1,
     name: 'E‑Commerce Platform',
+    stack: ['React', 'Node.js', 'MongoDB', 'Stripe'],
     description: 'A full‑stack online store with cart, checkout, and admin dashboard.',
-    techStack: ['React', 'Node.js', 'MongoDB', 'Stripe'],
-    demoLink: 'https://demo.example.com',
-    githubLink: 'https://github.com/example/ecommerce',
-    emoji: '🛒',
+    demoUrl: 'https://demo.example.com',
+    type: 'link',
   },
   {
     id: 2,
     name: 'Task Management App',
+    stack: ['TypeScript', 'Next.js', 'Socket.io', 'Tailwind'],
     description: 'Collaborative task board with drag‑and‑drop and real‑time updates.',
-    techStack: ['TypeScript', 'Next.js', 'Socket.io', 'Tailwind'],
-    demoLink: 'https://tasks.example.com',
-    githubLink: 'https://github.com/example/taskapp',
-    emoji: '✅',
+    demoUrl: 'https://tasks.example.com',
+    type: 'embed',
   },
   {
     id: 3,
-    name: 'Weather Dashboard',
-    description: 'Beautiful weather app with forecasts, maps, and location search.',
-    techStack: ['React', 'Chart.js', 'Weather API', 'CSS Grid'],
-    demoLink: 'https://weather.example.com',
-    githubLink: 'https://github.com/example/weather',
-    emoji: '🌤️',
-  },
-  {
-    id: 4,
-    name: 'Portfolio Website',
-    description: 'Responsive personal portfolio built with modern technologies.',
-    techStack: ['React', 'TypeScript', 'Tailwind CSS', 'Vite'],
-    demoLink: 'https://portfolio.example.com',
-    githubLink: 'https://github.com/example/portfolio',
-    emoji: '🎨',
-  },
-  {
-    id: 5,
-    name: 'Chat Application',
-    description: 'Real‑time chat app with rooms, user authentication, and file sharing.',
-    techStack: ['React', 'Firebase', 'Material‑UI', 'WebRTC'],
-    demoLink: 'https://chat.example.com',
-    githubLink: 'https://github.com/example/chat',
-    emoji: '💬',
-  },
-  {
-    id: 6,
-    name: 'Fitness Tracker',
-    description: 'Mobile‑first fitness app with workout plans and progress charts.',
-    techStack: ['React Native', 'GraphQL', 'Firebase', 'Recharts'],
-    demoLink: 'https://fitness.example.com',
-    githubLink: 'https://github.com/example/fitness',
-    emoji: '🏋️',
+    name: 'Figma Mobile App Design',
+    stack: ['Figma', 'UI/UX Design', 'Prototyping'],
+    description: 'Complete mobile app design with interactive prototypes and design system.',
+    demoUrl: '',
+    type: 'prototype',
+    images: [
+      {
+        id: 'img-1',
+        url: 'https://picsum.photos/800/600?random=1',
+        thumbnailUrl: 'https://picsum.photos/200/200?random=1',
+        previewUrl: 'https://picsum.photos/800/600?random=1',
+        originalName: 'login-screen.png',
+        size: 1024 * 1024,
+        mimeType: 'image/png',
+        uploadOrder: 1,
+      },
+      {
+        id: 'img-2',
+        url: 'https://picsum.photos/800/600?random=2',
+        thumbnailUrl: 'https://picsum.photos/200/200?random=2',
+        previewUrl: 'https://picsum.photos/800/600?random=2',
+        originalName: 'dashboard.png',
+        size: 1.5 * 1024 * 1024,
+        mimeType: 'image/png',
+        uploadOrder: 2,
+      },
+      {
+        id: 'img-3',
+        url: 'https://picsum.photos/800/600?random=3',
+        thumbnailUrl: 'https://picsum.photos/200/200?random=3',
+        previewUrl: 'https://picsum.photos/800/600?random=3',
+        originalName: 'settings.png',
+        size: 0.8 * 1024 * 1024,
+        mimeType: 'image/png',
+        uploadOrder: 3,
+      },
+    ],
+    thumbnail: 'https://picsum.photos/200/200?random=1',
   },
 ];

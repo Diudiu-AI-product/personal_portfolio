@@ -24,12 +24,27 @@ type: spec
 
 ## 系统架构
 
-### 1. 技术栈
+### 1. 架构决策说明
+**当前现状**：项目目前是纯前端React应用，使用Vite开发服务器，数据存储在静态TypeScript文件中（`src/data/projects.ts`）。
+
+**架构选择**：为了支持文件上传、图片处理和持久化存储，选择添加Node.js后端服务。此决策基于以下考虑：
+- 文件上传需要服务器端处理（安全验证、图片处理、持久化存储）
+- 图片处理（缩略图生成）需要在服务端进行（使用Sharp库）
+- 需要数据库存储图片元数据和项目关联关系
+- 生产环境需要独立的文件服务
+
+**集成方案**：
+- **开发环境**：前端运行在Vite开发服务器（端口5173），后端运行在Express服务器（端口3001），通过CORS跨域通信
+- **生产环境**：前端构建为静态文件，通过Nginx反向代理统一端口，API请求代理到后端服务
+- **数据迁移**：现有静态项目数据将初始化到数据库中，保持向后兼容
+
+### 2. 技术栈
 - **前端**：React + TypeScript + Tailwind CSS (现有)
-- **后端**：Node.js + Express (新增)
-- **数据库**：SQLite (扩展现有数据模型)
+- **后端**：Node.js + Express (新增，端口3001)
+- **数据库**：SQLite (轻量级，适合小型项目)
 - **图片处理**：Sharp (生成缩略图和预览图)
 - **文件上传**：Multer (处理多文件上传)
+- **身份验证**：简单API密钥（环境变量配置）
 
 ### 2. 架构图
 ```
@@ -139,31 +154,40 @@ export interface PrototypeImage {
 
 ## 后端API设计
 
-### 1. API端点
+### 1. API端点设计
 
-#### **基础CRUD**
+#### **简化设计原则**
+- 保持RESTful风格，但简化端点数量
+- 单个端点处理多文件上传
+- 图片通过统一的资源端点访问，支持查询参数控制尺寸
+
+#### **核心端点**
 ```
-GET    /api/projects           # 获取所有项目（包含原型图项目）
-POST   /api/projects           # 创建新项目（含图片上传）
+# 项目管理（兼容现有前端数据流）
+GET    /api/projects           # 获取所有项目（包含原型图）
+POST   /api/projects           # 创建新项目（支持直接上传图片）
 GET    /api/projects/:id       # 获取单个项目详情
-PUT    /api/projects/:id       # 更新项目（支持图片增删）
-DELETE /api/projects/:id       # 删除项目及关联图片
+PUT    /api/projects/:id       # 更新项目信息
+DELETE /api/projects/:id       # 删除项目（级联删除关联图片）
 
-GET    /api/prototypes         # 仅获取原型图项目
+# 图片上传（单端点处理多文件）
+POST   /api/projects/:id/images  # 为指定项目上传图片
+                                   # 支持多文件，返回处理后的URL数组
+
+# 图片管理
+DELETE /api/images/:imageId      # 删除单张图片
+PUT    /api/images/:imageId/order # 更新图片显示顺序
+
+# 图片访问（智能服务）
+GET    /api/images/:imageId      # 获取图片
+                                   # 查询参数：?size=original|preview|thumbnail
+                                   # 查询参数：?width=800&height=600（自定义尺寸）
 ```
 
-#### **图片管理**
-```
-POST   /api/upload             # 文件上传（返回处理后的URL）
-GET    /api/images/:id         # 获取图片文件（支持尺寸参数）
-DELETE /api/images/:id         # 删除单张图片
-```
-
-#### **缩略图服务**
-```
-GET    /api/thumbnails/:id     # 获取缩略图（200x200）
-GET    /api/previews/:id       # 获取预览图（800x600）
-```
+#### **与现有前端集成**
+- 前端继续使用现有数据流，通过API获取更新后的项目数据
+- 上传组件直接调用`/api/projects/:id/images`端点
+- 图片展示使用统一的图片服务端点，自动选择合适尺寸
 
 ### 2. 数据结构
 
@@ -203,33 +227,103 @@ CREATE TABLE project_images (
 );
 ```
 
-### 3. 文件处理
+### 3. 文件处理与存储
 
-#### **目录结构**
+#### **存储架构**
 ```
-uploads/
-├── 2024-01-15/           # 按日期组织
-│   ├── originals/        # 原始文件
-│   ├── thumbnails/       # 缩略图 200x200
-│   └── previews/         # 预览图 800x600
-└── temp/                 # 临时文件
+项目根目录/
+├── server/              # 后端服务代码
+│   ├── uploads/         # 上传文件存储
+│   │   ├── YYYY-MM-DD/  # 按日期组织
+│   │   │   ├── originals/    # 原始文件
+│   │   │   ├── thumbnails/   # 缩略图 200x200
+│   │   │   └── previews/     # 预览图 800x600
+│   │   └── temp/        # 临时文件（定期清理）
+│   ├── database/        # SQLite数据库文件
+│   └── ...              # 后端源代码
+└── 前端项目目录/         # 现有React前端
 ```
 
-#### **图片处理配置**
+#### **图片处理流程**
 ```javascript
-const PROCESSING_CONFIG = {
-  thumbnail: { width: 200, height: 200, fit: 'cover', quality: 70 },
-  preview: { width: 800, height: 600, fit: 'inside', quality: 80 }
+// 1. 文件验证阶段
+const validateFile = (file) => {
+  // 检查文件类型（仅允许PNG/JPG）
+  const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg'];
+  // 检查文件大小（≤5MB）
+  const maxSize = 5 * 1024 * 1024;
+  // 检查文件数量（≤10个/项目）
+  // 返回验证结果或错误信息
 };
 
-// 处理流程
-1. 接收上传文件 → 验证类型和大小
-2. 生成UUID和日期目录 → 创建目录结构
-3. 保存原始文件 → 记录文件信息
-4. 生成缩略图 → 200x200，裁剪适应
-5. 生成预览图 → 800x600，保持比例
-6. 返回URL和元数据 → 前端使用
+// 2. 文件处理阶段
+const processImage = async (fileBuffer, originalName) => {
+  // 生成唯一ID和存储路径
+  const imageId = uuid.v4();
+  const dateFolder = dayjs().format('YYYY-MM-DD');
+  const basePath = path.join('uploads', dateFolder, imageId);
+
+  // 创建目录结构
+  await fs.ensureDir(path.join(basePath, 'originals'));
+  await fs.ensureDir(path.join(basePath, 'thumbnails'));
+  await fs.ensureDir(path.join(basePath, 'previews'));
+
+  // 保存原始文件
+  const originalPath = path.join(basePath, 'originals', originalName);
+  await fs.writeFile(originalPath, fileBuffer);
+
+  // 使用Sharp处理图片
+  const sharpInstance = sharp(fileBuffer);
+
+  // 生成缩略图（200x200，裁剪适应）
+  const thumbnailPath = path.join(basePath, 'thumbnails', 'thumbnail.jpg');
+  await sharpInstance
+    .clone()
+    .resize(200, 200, { fit: 'cover', position: 'center' })
+    .jpeg({ quality: 70 })
+    .toFile(thumbnailPath);
+
+  // 生成预览图（800x600，保持比例）
+  const previewPath = path.join(basePath, 'previews', 'preview.jpg');
+  await sharpInstance
+    .clone()
+    .resize(800, 600, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 80 })
+    .toFile(previewPath);
+
+  // 返回处理结果
+  return {
+    imageId,
+    paths: { original: originalPath, thumbnail: thumbnailPath, preview: previewPath },
+    metadata: await sharpInstance.metadata()
+  };
+};
+
+// 3. 数据库记录阶段
+const saveImageRecord = async (projectId, imageData, uploadOrder) => {
+  // 保存到SQLite数据库
+  const record = {
+    id: imageData.imageId,
+    project_id: projectId,
+    filename: path.basename(imageData.paths.original),
+    original_name: originalName,
+    mime_type: 'image/jpeg',
+    size: fileBuffer.length,
+    thumbnail_path: imageData.paths.thumbnail,
+    preview_path: imageData.paths.preview,
+    original_path: imageData.paths.original,
+    upload_order: uploadOrder,
+    created_at: new Date().toISOString()
+  };
+  // 插入数据库...
+};
 ```
+
+#### **并发处理优化**
+- **限制并发数**：同时处理最多3个文件，避免服务器过载
+- **进度反馈**：使用WebSocket或长轮询向客户端发送处理进度
+- **错误恢复**：单个文件处理失败不影响其他文件，可重试失败的文件
+- **内存管理**：使用流式处理大文件，及时清理内存
 
 ### 4. 错误处理
 
@@ -255,21 +349,55 @@ const PROCESSING_CONFIG = {
 
 ## 安全设计
 
-### 1. 文件安全
-- **类型验证**：仅允许`.png`、`.jpg`、`.jpeg`扩展名
-- **文件检查**：检查文件魔数以验证实际类型
-- **大小限制**：单个文件≤5MB，总大小≤50MB
-- **数量限制**：每个项目最多10张图片
+### 1. 身份验证与授权
+- **API密钥认证**：后端服务使用环境变量配置的API密钥
+  ```javascript
+  // 中间件示例
+  const apiKeyMiddleware = (req, res, next) => {
+    const apiKey = req.headers['x-api-key'];
+    if (apiKey !== process.env.API_KEY) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    next();
+  };
+  ```
+- **操作权限**：所有修改操作（上传、删除、更新）需要API密钥
+- **只读访问**：图片查看和项目查询不需要认证
 
-### 2. 路径安全
-- **绝对路径**：使用绝对路径防止目录遍历攻击
-- **UUID命名**：文件名使用UUID，避免冲突和注入
-- **权限控制**：文件系统权限设置为只读/写必要目录
+### 2. 文件上传安全
+- **类型验证**：检查文件扩展名和MIME类型，仅允许PNG/JPG
+- **文件头验证**：使用文件魔数验证实际文件类型，防止伪装攻击
+- **大小限制**：单个文件≤5MB，单次请求总大小≤50MB
+- **数量限制**：每个项目最多10张图片，防止资源耗尽
+- **病毒扫描**：考虑集成ClamAV等病毒扫描工具（未来扩展）
+- **文件名安全**：移除特殊字符，使用UUID重命名，防止路径遍历
 
 ### 3. API安全
-- **CORS配置**：仅允许前端开发服务器访问
-- **输入验证**：所有输入参数验证和清理
-- **错误信息**：生产环境隐藏详细错误信息
+- **CORS配置**：严格限制源站，开发环境允许本地Vite服务器
+  ```javascript
+  app.use(cors({
+    origin: process.env.NODE_ENV === 'development'
+      ? 'http://localhost:5173'
+      : 'https://yourdomain.com',
+    credentials: true
+  }));
+  ```
+- **输入验证**：所有请求参数验证和清理，使用Joi或Zod
+- **速率限制**：限制上传端点的请求频率，防止滥用
+- **SQL注入防护**：使用参数化查询，避免直接拼接SQL
+- **XSS防护**：输出编码，设置安全的HTTP头（CSP）
+
+### 4. 文件系统安全
+- **目录隔离**：上传文件存储在专用目录，与代码分离
+- **权限控制**：文件系统权限设置为最小必要权限
+- **路径安全**：使用绝对路径，规范化用户输入路径
+- **定期清理**：定时清理未关联的临时文件和旧文件
+
+### 5. 生产环境安全
+- **错误信息**：生产环境隐藏详细错误信息，记录到日志
+- **安全头**：设置安全的HTTP头（HSTS, X-Frame-Options等）
+- **日志记录**：记录所有上传、删除操作，便于审计
+- **监控告警**：监控异常上传行为（频率、大小、类型）
 
 ## 性能优化
 
@@ -293,46 +421,383 @@ const PROCESSING_CONFIG = {
 
 ## 部署与运维
 
-### 1. 环境要求
+### 1. 环境要求与配置
+
+#### **开发环境**
 - **Node.js**：≥18.0.0
-- **存储空间**：根据图片数量预估存储需求
-- **内存**：至少512MB RAM（图片处理需要）
-- **端口**：前端5173，后端3001
+- **前端端口**：5173（Vite开发服务器）
+- **后端端口**：3001（Express服务器）
+- **存储空间**：至少1GB可用空间（用于上传文件）
 
-### 2. 部署步骤
-1. **安装依赖**：`npm install`（前端+后端）
-2. **环境配置**：配置数据库连接、文件存储路径
-3. **构建前端**：`npm run build`
-4. **启动后端**：`node server.js`
-5. **配置代理**：Nginx配置反向代理（生产环境）
+#### **生产环境**
+- **服务器**：Linux服务器（Ubuntu 20.04+ 或 CentOS 7+）
+- **Node.js**：≥18.0.0（使用nvm管理版本）
+- **内存**：至少1GB RAM（图片处理需要额外内存）
+- **存储**：根据预估使用量配置，建议预留10GB+空间
+- **数据库**：SQLite（内嵌，无需单独安装）
 
-### 3. 监控与维护
-- **日志记录**：记录上传、删除、错误等操作
-- **存储监控**：监控磁盘使用情况
-- **性能监控**：监控API响应时间和错误率
-- **定期清理**：定时清理未关联的临时文件
+#### **环境变量配置**
+```bash
+# .env文件示例
+NODE_ENV=production
+PORT=3001
+API_KEY=your_secure_api_key_here
+DATABASE_PATH=./database/projects.db
+UPLOAD_PATH=./uploads
+CORS_ORIGIN=https://yourdomain.com
+MAX_FILE_SIZE=5242880  # 5MB
+MAX_FILES_PER_PROJECT=10
+```
+
+### 2. 部署架构
+
+#### **开发环境部署**
+```
+┌─────────────────┐    ┌─────────────────┐
+│  前端 React     │    │  后端 Express   │
+│  (localhost:5173)│◄──►│ (localhost:3001) │
+│  Vite Dev Server │    │   API服务       │
+└─────────────────┘    └─────────────────┘
+         │                       │
+         └───────────┬───────────┘
+                     ▼
+              ┌─────────────┐
+              │  文件系统    │
+              │  uploads/   │
+              │  database/  │
+              └─────────────┘
+```
+
+#### **生产环境部署**（使用Nginx反向代理）
+```
+                               ┌─────────────────┐
+                          ┌───►│  前端静态文件   │
+                          │    │  /var/www/html  │
+                          │    └─────────────────┘
+┌─────────────┐    ┌─────────────┐    │
+│   用户访问    │    │   Nginx     │    │
+│  yourdomain.com│◄──►│ 反向代理    │◄───┤
+└─────────────┘    └─────────────┘    │
+                          │            │
+                          │    ┌─────────────────┐
+                          └───►│  后端 Express   │
+                               │  (localhost:3001)│
+                               │   API服务       │
+                               └─────────────────┘
+```
+
+### 3. 详细部署步骤
+
+#### **步骤1：服务器准备**
+```bash
+# 1. 安装Node.js和npm
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+nvm install 18
+nvm use 18
+
+# 2. 安装PM2（进程管理）
+npm install -g pm2
+
+# 3. 安装Nginx
+sudo apt update
+sudo apt install nginx -y
+```
+
+#### **步骤2：项目部署**
+```bash
+# 1. 克隆项目
+git clone <your-repo-url> /var/www/personal-portfolio
+cd /var/www/personal-portfolio
+
+# 2. 安装依赖
+npm install
+cd server && npm install
+
+# 3. 环境配置
+cp .env.example .env
+# 编辑.env文件，配置API密钥等
+
+# 4. 构建前端
+npm run build
+
+# 5. 启动后端服务（使用PM2）
+cd server
+pm2 start server.js --name "portfolio-api"
+pm2 save
+pm2 startup
+```
+
+#### **步骤3：Nginx配置**
+```nginx
+# /etc/nginx/sites-available/portfolio
+server {
+    listen 80;
+    server_name yourdomain.com;
+
+    # 前端静态文件
+    location / {
+        root /var/www/personal-portfolio/dist;
+        try_files $uri $uri/ /index.html;
+    }
+
+    # API代理
+    location /api/ {
+        proxy_pass http://localhost:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    # 图片文件服务
+    location /uploads/ {
+        root /var/www/personal-portfolio/server;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}
+```
+
+#### **步骤4：SSL证书（可选但推荐）**
+```bash
+# 使用Let's Encrypt获取SSL证书
+sudo apt install certbot python3-certbot-nginx -y
+sudo certbot --nginx -d yourdomain.com
+```
+
+### 4. 监控与维护
+
+#### **日志管理**
+- **应用日志**：PM2管理日志，`pm2 logs portfolio-api`
+- **访问日志**：Nginx访问日志 `/var/log/nginx/access.log`
+- **错误日志**：Nginx错误日志 `/var/log/nginx/error.log`
+- **文件日志**：自定义应用日志记录上传、删除等操作
+
+#### **性能监控**
+- **PM2监控**：`pm2 monit` 查看CPU、内存使用情况
+- **磁盘监控**：监控`uploads/`目录大小，设置警报阈值
+- **API监控**：监控响应时间、错误率、请求频率
+
+#### **备份策略**
+- **数据库备份**：定期备份SQLite数据库文件
+  ```bash
+  # 每日备份
+  0 2 * * * cp /var/www/personal-portfolio/server/database/projects.db /backup/projects-$(date +\%Y\%m\%d).db
+  ```
+- **文件备份**：定期备份`uploads/`目录
+- **配置备份**：备份环境变量和Nginx配置
+
+#### **维护任务**
+- **定期清理**：清理超过30天的临时文件
+- **日志轮转**：配置logrotate管理日志文件
+- **安全更新**：定期更新Node.js和Nginx安全补丁
+- **容量规划**：监控存储使用，提前规划扩容
 
 ## 测试计划
 
 ### 1. 单元测试
-- **上传组件**：文件验证、进度管理、错误处理
-- **图片处理**：缩略图生成、格式转换、错误处理
-- **API端点**：请求验证、错误响应、数据一致性
+
+#### **前端测试**（使用Jest + React Testing Library）
+```javascript
+// FileUploader.test.tsx
+describe('FileUploader组件', () => {
+  test('文件验证：类型检查', () => {
+    // 测试PNG、JPG文件通过，其他类型拒绝
+  });
+
+  test('文件验证：大小检查', () => {
+    // 测试5MB以下文件通过，超过5MB拒绝
+  });
+
+  test('上传进度显示', () => {
+    // 测试进度条根据上传进度更新
+  });
+
+  test('错误处理', () => {
+    // 测试网络错误、服务器错误等情况的用户反馈
+  });
+});
+
+// ImageGalleryModal.test.tsx
+describe('图片画廊组件', () => {
+  test('图片切换功能', () => {
+    // 测试左右箭头切换图片
+  });
+
+  test('键盘导航', () => {
+    // 测试ESC关闭、左右箭头切换
+  });
+
+  test('图片懒加载', () => {
+    // 测试图片进入视口时加载
+  });
+});
+```
+
+#### **后端测试**（使用Jest + Supertest）
+```javascript
+// upload.test.js
+describe('文件上传API', () => {
+  test('单文件上传成功', async () => {
+    // 模拟文件上传，验证返回的URL和元数据
+  });
+
+  test('多文件上传成功', async () => {
+    // 模拟多文件上传，验证所有文件处理完成
+  });
+
+  test('文件类型验证失败', async () => {
+    // 上传非图片文件，验证返回400错误
+  });
+
+  test('文件大小超限', async () => {
+    // 上传超过5MB的文件，验证返回413错误
+  });
+
+  test('身份验证失败', async () => {
+    // 不使用API密钥上传，验证返回401错误
+  });
+});
+
+// image-processing.test.js
+describe('图片处理逻辑', () => {
+  test('缩略图生成', async () => {
+    // 验证生成的缩略图尺寸为200x200
+  });
+
+  test('预览图生成', async () => {
+    // 验证生成的预览图最大边长为800px，保持比例
+  });
+
+  test('图片质量压缩', async () => {
+    // 验证压缩后的图片质量在可接受范围内
+  });
+});
+```
 
 ### 2. 集成测试
-- **上传流程**：前端上传 → 后端处理 → 数据库存储 → 前端展示
-- **删除流程**：前端删除 → 后端清理 → 文件系统删除
-- **展示流程**：数据加载 → 图片渲染 → 用户交互
+
+#### **端到端测试**（使用Cypress）
+```javascript
+// upload-flow.cy.js
+describe('文件上传完整流程', () => {
+  it('从选择文件到展示的完整流程', () => {
+    // 1. 访问网站，点击上传按钮
+    // 2. 选择PNG文件，验证预览显示
+    // 3. 点击上传，验证进度显示
+    // 4. 上传完成，验证图片显示在项目中
+    // 5. 点击图片，验证放大查看功能
+    // 6. 删除图片，验证从界面消失
+  });
+
+  it('多文件上传和排序', () => {
+    // 1. 选择多个文件
+    // 2. 拖拽调整顺序
+    // 3. 上传后验证顺序保持
+  });
+
+  it('错误处理流程', () => {
+    // 1. 选择超大文件，验证错误提示
+    // 2. 选择错误类型文件，验证错误提示
+    // 3. 网络断开，验证上传失败处理
+  });
+});
+
+// api-integration.cy.js
+describe('前后端集成测试', () => {
+  it('项目创建与图片关联', () => {
+    // 创建新项目 → 上传图片 → 验证关联关系
+  });
+
+  it('数据一致性验证', () => {
+    // 在前端操作，验证后端数据同步更新
+  });
+});
+```
 
 ### 3. 性能测试
-- **并发上传**：测试多用户同时上传的性能
-- **大文件处理**：测试接近5MB限制的文件处理
-- **大量图片**：测试包含多图片的项目加载性能
 
-### 4. 兼容性测试
-- **浏览器**：Chrome, Firefox, Safari, Edge
-- **设备**：桌面、平板、手机
-- **网络**：高速、低速、不稳定网络环境
+#### **负载测试**（使用k6）
+```javascript
+// upload-load-test.js
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+
+export const options = {
+  stages: [
+    { duration: '30s', target: 10 },  // 10个虚拟用户
+    { duration: '1m', target: 25 },   // 25个虚拟用户
+    { duration: '30s', target: 0 },   // 逐渐减少
+  ],
+};
+
+export default function () {
+  // 模拟文件上传请求
+  const url = 'http://localhost:3001/api/upload';
+  const payload = {
+    // 模拟文件数据
+  };
+
+  const params = {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+      'x-api-key': __ENV.API_KEY,
+    },
+  };
+
+  const res = http.post(url, payload, params);
+
+  check(res, {
+    '上传成功': (r) => r.status === 200,
+    '响应时间<5s': (r) => r.timings.duration < 5000,
+  });
+
+  sleep(1);
+}
+```
+
+#### **性能指标**
+- **API响应时间**：P95 < 3秒，P99 < 5秒
+- **图片处理时间**：单张图片处理 < 2秒
+- **并发处理能力**：支持至少10个并发上传
+- **内存使用**：处理过程中内存使用稳定，无泄漏
+
+### 4. 兼容性测试矩阵
+
+#### **浏览器兼容性**
+| 浏览器 | 版本 | 测试重点 |
+|--------|------|----------|
+| Chrome | 90+ | 完整功能 |
+| Firefox | 88+ | 完整功能 |
+| Safari | 14+ | 文件API兼容性 |
+| Edge | 90+ | 完整功能 |
+
+#### **设备兼容性**
+- **桌面端**：1920x1080, 1366x768, 1280x720
+- **平板端**：iPad (1024x768), iPad Pro (2048x2732)
+- **手机端**：iPhone SE (375x667), iPhone 12 Pro (390x844), 安卓常见尺寸
+
+#### **网络条件测试**
+- **高速网络**：光纤（100Mbps+），验证快速上传
+- **低速网络**：3G（1Mbps），验证进度显示和超时处理
+- **不稳定网络**：模拟网络中断，验证错误恢复
+
+### 5. 安全测试
+
+#### **渗透测试要点**
+- **文件上传绕过**：尝试上传恶意文件，验证防护
+- **路径遍历**：尝试访问系统文件，验证路径安全
+- **API滥用**：尝试未授权访问，验证身份验证
+- **XSS测试**：尝试注入脚本，验证输出编码
+
+#### **安全扫描工具**
+- **OWASP ZAP**：自动化安全扫描
+- **Nessus**：漏洞扫描
+- **手动测试**：关键功能手动安全测试
 
 ## 未来扩展
 
