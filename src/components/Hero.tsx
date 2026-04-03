@@ -41,7 +41,7 @@ const Hero = () => {
           transition={{ duration: 0.6, delay: 0.4 }}
           className="text-xl md:text-2xl text-gray-300 max-w-3xl mx-auto mb-12"
         >
-          一位热爱AI的产品经理
+          技术型AI产品经理 | Agent驱动产研体系
         </motion.p>
 
         {/* Call-to-action buttons */}
