@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import type { Project, PrototypeImage } from '../data/projects';
+import type { Project } from '../data/projects';
 import ThumbnailCard from './ThumbnailCard';
 import ImageGalleryModal from './ImageGalleryModal';
 
