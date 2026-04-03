@@ -51,6 +51,20 @@ const ThumbnailCard: React.FC<ThumbnailCardProps> = ({
           alt={title || '项目缩略图'}
           className="w-full h-full object-cover"
           loading="lazy"
+          onError={(e) => {
+            console.error('ThumbnailCard: Image failed to load', {
+              src: firstImage.thumbnailUrl || firstImage.url,
+              imageId: firstImage.id,
+              imageName: firstImage.originalName
+            });
+            e.currentTarget.style.display = 'none';
+          }}
+          onLoad={() => {
+            console.log('ThumbnailCard: Image loaded successfully', {
+              src: firstImage.thumbnailUrl || firstImage.url,
+              imageId: firstImage.id
+            });
+          }}
         />
 
         {/* 悬停叠加层 */}

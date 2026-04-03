@@ -151,6 +151,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({
   const handleUpload = useCallback(async () => {
     if (files.length === 0 || isUploading) return;
 
+    console.log('FileUploader: handleUpload called with files:', files.map(f => ({ name: f.name, size: f.size, type: f.type })));
     setIsUploading(true);
     setErrors([]);
 
@@ -169,6 +170,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({
         });
       });
 
+      console.log('FileUploader: upload completed with results:', results);
       if (onUploadComplete) {
         onUploadComplete(results);
       }
@@ -177,6 +179,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({
       setFiles([]);
       setUploadTasks([]);
     } catch (error) {
+      console.error('FileUploader: upload failed:', error);
       setErrors([{ file: files[0], message: error instanceof Error ? error.message : '上传失败' }]);
     } finally {
       setIsUploading(false);

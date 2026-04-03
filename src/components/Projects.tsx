@@ -49,6 +49,7 @@ const Projects: React.FC = () => {
   };
 
   const [projects, setProjects] = useState<Project[]>(() => loadProjectsFromStorage());
+  const [, setIsUploading] = useState(false); // 用于控制自动上传状态
 
   // 监听projects变化并保存到localStorage
   useEffect(() => {
@@ -116,8 +117,34 @@ const Projects: React.FC = () => {
     }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    console.log('handleSubmit called:', {
+      newProjectType: newProject.type,
+      uploadedImagesCount: uploadedImages.length,
+      newProjectImagesCount: newProject.images.length
+    });
+
+    let imagesToAdd: PrototypeImage[] = [...uploadedImages];
+
+    // 如果是prototype类型但没有已上传的图片，但有选择的文件，自动上传
+    if (newProject.type === 'prototype' && uploadedImages.length === 0 && newProject.images.length > 0) {
+      console.log('Auto-uploading files:', newProject.images);
+      try {
+        setIsUploading(true);
+        const uploaded = await uploadService.uploadFiles(newProject.images);
+        console.log('Auto-upload completed:', uploaded);
+        imagesToAdd = uploaded;
+      } catch (error) {
+        console.error('Auto-upload failed:', error);
+        alert(`上传失败: ${error instanceof Error ? error.message : '未知错误'}`);
+        setIsUploading(false);
+        return;
+      } finally {
+        setIsUploading(false);
+      }
+    }
 
     const projectToAdd: Project = {
       id: projects.length > 0 ? Math.max(...projects.map(p => p.id)) + 1 : 1,
@@ -129,11 +156,15 @@ const Projects: React.FC = () => {
     };
 
     // 如果是prototype类型，添加图片数据
-    if (newProject.type === 'prototype' && uploadedImages.length > 0) {
-      projectToAdd.images = uploadedImages;
-      projectToAdd.thumbnail = uploadedImages[0]?.thumbnailUrl || uploadedImages[0]?.url;
+    if (newProject.type === 'prototype' && imagesToAdd.length > 0) {
+      console.log('Adding images to project:', imagesToAdd);
+      projectToAdd.images = imagesToAdd;
+      projectToAdd.thumbnail = imagesToAdd[0]?.thumbnailUrl || imagesToAdd[0]?.url;
+    } else if (newProject.type === 'prototype' && imagesToAdd.length === 0) {
+      console.warn('Prototype project created without any images.');
     }
 
+    console.log('Project to add:', projectToAdd);
     setProjects(prev => [...prev, projectToAdd]);
     setNewProject({
       id: 0,
@@ -169,6 +200,8 @@ const Projects: React.FC = () => {
   };
 
   const handleUploadComplete = (images: PrototypeImage[]) => {
+    console.log('handleUploadComplete called with images:', images);
+    console.log('Image URLs:', images.map(img => ({ url: img.url, thumbnailUrl: img.thumbnailUrl, previewUrl: img.previewUrl })));
     setUploadedImages(images);
   };
 

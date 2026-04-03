@@ -102,6 +102,13 @@ export class UploadService {
 
     // 生成对象URL用于图片显示
     const objectURL = URL.createObjectURL(file);
+    console.log('generateMockPrototypeImage:', {
+      imageId,
+      fileName: originalName,
+      objectURL,
+      fileSize: file.size,
+      fileType: file.type
+    });
     this.objectURLs.set(imageId, objectURL);
 
     return {
