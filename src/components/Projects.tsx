@@ -82,6 +82,9 @@ const Projects: React.FC = () => {
   const [prototypeGalleryOpen, setPrototypeGalleryOpen] = useState(false);
   const [selectedPrototypeProject, setSelectedPrototypeProject] = useState<Project | null>(null);
   const [uploadedImages, setUploadedImages] = useState<PrototypeImage[]>([]);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -205,6 +208,128 @@ const Projects: React.FC = () => {
     setUploadedImages(images);
   };
 
+  // 编辑项目
+  const handleEditClick = (project: Project) => {
+    setEditingProject(project);
+    setNewProject({
+      id: project.id,
+      name: project.name,
+      stack: [...project.stack],
+      description: project.description,
+      demoUrl: project.demoUrl,
+      type: project.type,
+      currentTech: '',
+      images: [],
+    });
+    // 如果是prototype类型且有图片，设置uploadedImages
+    if (project.type === 'prototype' && project.images && project.images.length > 0) {
+      setUploadedImages(project.images);
+    } else {
+      setUploadedImages([]);
+    }
+    setShowEditModal(true);
+  };
+
+  // 取消编辑
+  const handleEditCancel = () => {
+    setShowEditModal(false);
+    setEditingProject(null);
+    setNewProject({
+      id: 0,
+      name: '',
+      stack: [],
+      description: '',
+      demoUrl: '',
+      type: 'link',
+      currentTech: '',
+      images: [],
+    });
+    setUploadedImages([]);
+  };
+
+  // 提交编辑
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingProject) return;
+
+    console.log('handleEditSubmit called for project:', editingProject.id);
+
+    let imagesToAdd: PrototypeImage[] = [...uploadedImages];
+
+    // 如果是prototype类型但没有已上传的图片，但有选择的文件，自动上传
+    if (editingProject.type === 'prototype' && uploadedImages.length === 0 && newProject.images.length > 0) {
+      console.log('Auto-uploading files for edit:', newProject.images);
+      try {
+        setIsUploading(true);
+        const uploaded = await uploadService.uploadFiles(newProject.images);
+        console.log('Auto-upload completed:', uploaded);
+        imagesToAdd = uploaded;
+      } catch (error) {
+        console.error('Auto-upload failed:', error);
+        alert(`上传失败: ${error instanceof Error ? error.message : '未知错误'}`);
+        setIsUploading(false);
+        return;
+      } finally {
+        setIsUploading(false);
+      }
+    }
+
+    const updatedProject: Project = {
+      id: editingProject.id,
+      name: newProject.name,
+      stack: [...newProject.stack],
+      description: newProject.description,
+      demoUrl: newProject.demoUrl,
+      type: newProject.type,
+    };
+
+    // 如果是prototype类型，添加图片数据
+    if (newProject.type === 'prototype' && imagesToAdd.length > 0) {
+      console.log('Adding images to updated project:', imagesToAdd);
+      updatedProject.images = imagesToAdd;
+      updatedProject.thumbnail = imagesToAdd[0]?.thumbnailUrl || imagesToAdd[0]?.url;
+    }
+
+    setProjects(prev => prev.map(p => p.id === editingProject.id ? updatedProject : p));
+    setShowEditModal(false);
+    setEditingProject(null);
+    setNewProject({
+      id: 0,
+      name: '',
+      stack: [],
+      description: '',
+      demoUrl: '',
+      type: 'link',
+      currentTech: '',
+      images: [],
+    });
+    setUploadedImages([]);
+  };
+
+  // 删除项目
+  const handleDeleteClick = (project: Project) => {
+    setProjectToDelete(project);
+  };
+
+  // 确认删除
+  const handleDeleteConfirm = () => {
+    if (!projectToDelete) return;
+
+    // 清理对象URL（如果是prototype项目）
+    if (projectToDelete.type === 'prototype' && projectToDelete.images) {
+      const imageIds = projectToDelete.images.map(img => img.id);
+      uploadService.revokeObjectURLs(imageIds);
+    }
+
+    setProjects(prev => prev.filter(p => p.id !== projectToDelete.id));
+    setProjectToDelete(null);
+  };
+
+  // 取消删除
+  const handleDeleteCancel = () => {
+    setProjectToDelete(null);
+  };
+
   const openEmbedModal = (project: Project) => {
     setSelectedProject(project);
     setEmbedModalOpen(true);
@@ -296,7 +421,7 @@ const Projects: React.FC = () => {
                       </span>
                     ))}
                   </div>
-                  <div className="flex">
+                  <div className="flex gap-2">
                     {project.type === 'link' ? (
                       <a
                         href={project.demoUrl}
@@ -326,6 +451,18 @@ const Projects: React.FC = () => {
                         <span className="text-gray-400 text-sm py-2">暂无原型图</span>
                       )
                     )}
+                    <button
+                      onClick={() => handleEditClick(project)}
+                      className="px-3 py-2 bg-gray-700 text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-600 transition-colors"
+                    >
+                      编辑
+                    </button>
+                    <button
+                      onClick={() => handleDeleteClick(project)}
+                      className="px-3 py-2 bg-red-700/80 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors"
+                    >
+                      删除
+                    </button>
                   </div>
                 </div>
               </div>
@@ -517,6 +654,239 @@ const Projects: React.FC = () => {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Project Modal */}
+      {showEditModal && editingProject && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gradient-to-b from-purple-900/90 to-pink-900/90 backdrop-blur-lg rounded-2xl border border-purple-700/50 shadow-2xl w-full max-w-2xl">
+            <div className="p-8">
+              <div className="flex justify-between items-center mb-8">
+                <h3 className="text-2xl font-bold text-white">编辑项目</h3>
+                <button
+                  onClick={handleEditCancel}
+                  className="text-purple-300 hover:text-white text-2xl"
+                >
+                  ×
+                </button>
+              </div>
+
+              <form onSubmit={handleEditSubmit}>
+                <div className="space-y-6">
+                  {/* 项目名称 */}
+                  <div>
+                    <label className="block text-purple-200 mb-2 font-medium">项目名称</label>
+                    <input
+                      type="text"
+                      name="name"
+                      value={newProject.name}
+                      onChange={handleInputChange}
+                      className="w-full px-4 py-3 bg-purple-900/50 border border-purple-700/50 rounded-lg text-white placeholder-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      placeholder="输入项目名称"
+                      required
+                    />
+                  </div>
+
+                  {/* 技术栈 */}
+                  <div>
+                    <label className="block text-purple-200 mb-2 font-medium">技术栈</label>
+                    <div className="flex gap-2 mb-3">
+                      <input
+                        type="text"
+                        value={newProject.currentTech}
+                        onChange={(e) => setNewProject(prev => ({ ...prev, currentTech: e.target.value }))}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddTech();
+                          }
+                        }}
+                        className="flex-1 px-4 py-3 bg-purple-900/50 border border-purple-700/50 rounded-lg text-white placeholder-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                        placeholder="输入技术名称，按添加按钮或回车"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddTech}
+                        className="px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg font-medium hover:opacity-90 transition-opacity"
+                      >
+                        添加
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {newProject.stack.map((tech, index) => (
+                        <div key={index} className="flex items-center gap-1 px-3 py-1 bg-purple-800/70 text-purple-100 rounded-full text-sm">
+                          <span>{tech}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTech(index)}
+                            className="text-purple-300 hover:text-white ml-1"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 项目描述 */}
+                  <div>
+                    <label className="block text-purple-200 mb-2 font-medium">项目描述</label>
+                    <textarea
+                      name="description"
+                      value={newProject.description}
+                      onChange={handleInputChange}
+                      rows={3}
+                      className="w-full px-4 py-3 bg-purple-900/50 border border-purple-700/50 rounded-lg text-white placeholder-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      placeholder="详细描述项目功能、特点等"
+                      required
+                    />
+                  </div>
+
+                  {/* Demo URL */}
+                  <div>
+                    <label className="block text-purple-200 mb-2 font-medium">演示链接{newProject.type !== 'prototype' && ' (必填)'}</label>
+                    <input
+                      type="url"
+                      name="demoUrl"
+                      value={newProject.demoUrl}
+                      onChange={handleInputChange}
+                      className="w-full px-4 py-3 bg-purple-900/50 border border-purple-700/50 rounded-lg text-white placeholder-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      placeholder="https://example.com"
+                      required={newProject.type !== 'prototype'}
+                    />
+                    {newProject.type === 'prototype' && (
+                      <p className="text-gray-400 text-sm mt-1">原型图项目可留空</p>
+                    )}
+                  </div>
+
+                  {/* 原型图上传区域 */}
+                  {newProject.type === 'prototype' && (
+                    <div>
+                      <label className="block text-purple-200 mb-2 font-medium">原型图上传</label>
+                      <FileUploader
+                        onFilesSelected={handleFilesSelected}
+                        onUploadComplete={handleUploadComplete}
+                        maxFiles={10}
+                        maxSize={50 * 1024 * 1024}
+                        allowedTypes={['image/png', 'image/jpeg', 'image/jpg']}
+                        disabled={false}
+                      />
+                      {uploadedImages.length > 0 && (
+                        <div className="mt-3 text-green-300 text-sm">
+                          已上传 {uploadedImages.length} 张图片
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 类型选择 */}
+                  <div>
+                    <label className="block text-purple-200 mb-2 font-medium">项目类型</label>
+                    <div className="flex gap-4">
+                      <label className="flex items-center">
+                        <input
+                          type="radio"
+                          name="type"
+                          value="link"
+                          checked={newProject.type === 'link'}
+                          onChange={handleInputChange}
+                          className="mr-2 text-purple-500"
+                        />
+                        <span className="text-purple-100">链接跳转</span>
+                      </label>
+                      <label className="flex items-center">
+                        <input
+                          type="radio"
+                          name="type"
+                          value="embed"
+                          checked={newProject.type === 'embed'}
+                          onChange={handleInputChange}
+                          className="mr-2 text-purple-500"
+                        />
+                        <span className="text-purple-100">嵌入展示</span>
+                      </label>
+                      <label className="flex items-center">
+                        <input
+                          type="radio"
+                          name="type"
+                          value="prototype"
+                          checked={newProject.type === 'prototype'}
+                          onChange={handleInputChange}
+                          className="mr-2 text-purple-500"
+                        />
+                        <span className="text-purple-100">原型图展示</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 按钮 */}
+                <div className="flex justify-end gap-4 mt-8 pt-6 border-t border-purple-700/50">
+                  <button
+                    type="button"
+                    onClick={handleEditCancel}
+                    className="px-6 py-3 border border-purple-600 text-purple-300 rounded-lg font-medium hover:bg-purple-900/30 transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg font-medium hover:opacity-90 transition-opacity"
+                  >
+                    保存更改
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      {projectToDelete && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gradient-to-b from-purple-900/90 to-pink-900/90 backdrop-blur-lg rounded-2xl border border-purple-700/50 shadow-2xl w-full max-w-md">
+            <div className="p-8">
+              <div className="flex justify-between items-center mb-8">
+                <h3 className="text-2xl font-bold text-white">确认删除</h3>
+                <button
+                  onClick={handleDeleteCancel}
+                  className="text-purple-300 hover:text-white text-2xl"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                <div>
+                  <p className="text-purple-200 mb-4">
+                    确定要删除项目 "<span className="text-white font-medium">{projectToDelete.name}</span>" 吗？
+                  </p>
+                  <p className="text-gray-400 text-sm">
+                    此操作无法撤销。如果该项目包含原型图，相关图片也会被删除。
+                  </p>
+                </div>
+
+                <div className="flex justify-end gap-4 mt-8 pt-6 border-t border-purple-700/50">
+                  <button
+                    type="button"
+                    onClick={handleDeleteCancel}
+                    className="px-6 py-3 border border-purple-600 text-purple-300 rounded-lg font-medium hover:bg-purple-900/30 transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDeleteConfirm}
+                    className="px-6 py-3 bg-gradient-to-r from-red-600 to-red-700 text-white rounded-lg font-medium hover:opacity-90 transition-opacity"
+                  >
+                    确认删除
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
