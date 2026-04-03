@@ -5,13 +5,14 @@
 
 import type { PrototypeImage } from '../data/projects';
 import type { UploadTask, FileValidationConfig, UploadServiceConfig } from '../types/prototype';
-import { UploadStatus, FileValidationError, generateUUID, generateMockImageUrl, validateFileType, validateFileSize, formatFileSize } from '../types/prototype';
+import { UploadStatus, FileValidationError, generateUUID, validateFileType, validateFileSize, formatFileSize } from '../types/prototype';
 
 export class UploadService {
   private config: UploadServiceConfig;
   private validationConfig: FileValidationConfig;
   private activeUploads: Map<string, UploadTask> = new Map();
   private uploadCallbacks: Map<string, (task: UploadTask) => void> = new Map();
+  private objectURLs: Map<string, string> = new Map(); // 存储生成的对象URL
 
   constructor(
     config: Partial<UploadServiceConfig> = {},
@@ -99,11 +100,15 @@ export class UploadService {
     const imageId = generateUUID();
     const originalName = file.name;
 
+    // 生成对象URL用于图片显示
+    const objectURL = URL.createObjectURL(file);
+    this.objectURLs.set(imageId, objectURL);
+
     return {
       id: imageId,
-      url: generateMockImageUrl(originalName, 'original'),
-      thumbnailUrl: generateMockImageUrl(originalName, 'thumbnail'),
-      previewUrl: generateMockImageUrl(originalName, 'preview'),
+      url: objectURL,
+      thumbnailUrl: objectURL, // 使用相同URL，前端组件会调整显示尺寸
+      previewUrl: objectURL,
       originalName,
       size: file.size,
       mimeType: file.type,
@@ -340,6 +345,29 @@ export class UploadService {
    */
   removeTaskUpdateCallback(taskId: string): void {
     this.uploadCallbacks.delete(taskId);
+  }
+
+  /**
+   * 清理对象URL
+   */
+  revokeObjectURLs(imageIds: string[]): void {
+    imageIds.forEach(id => {
+      const url = this.objectURLs.get(id);
+      if (url) {
+        URL.revokeObjectURL(url);
+        this.objectURLs.delete(id);
+      }
+    });
+  }
+
+  /**
+   * 清理所有对象URL
+   */
+  revokeAllObjectURLs(): void {
+    for (const url of this.objectURLs.values()) {
+      URL.revokeObjectURL(url);
+    }
+    this.objectURLs.clear();
   }
 }
 

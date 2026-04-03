@@ -1,13 +1,69 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { projects as initialProjects } from '../data/projects';
 import type { Project, PrototypeImage } from '../data/projects';
 import FileUploader from './FileUploader';
 import ThumbnailCard from './ThumbnailCard';
 import ImageGalleryModal from './ImageGalleryModal';
 import PrototypesGallery from './PrototypesGallery';
+import { uploadService } from '../services/UploadService';
 
 const Projects: React.FC = () => {
-  const [projects, setProjects] = useState(initialProjects);
+  const STORAGE_KEY = 'personal_portfolio_projects';
+
+  // 从localStorage加载项目数据，移除无效的图片URL
+  const loadProjectsFromStorage = (): Project[] => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (!stored) return initialProjects;
+
+      const parsed = JSON.parse(stored) as Project[];
+      // 清理可能无效的对象URL
+      return parsed.map(project => ({
+        ...project,
+        // 如果是prototype类型且有图片，但图片URL可能是无效的对象URL，移除图片数据
+        images: project.type === 'prototype' && project.images
+          ? project.images.map(img => ({
+              ...img,
+              // 如果是对象URL，标记为需要重新上传
+              url: img.url.startsWith('blob:') ? '' : img.url,
+              thumbnailUrl: img.thumbnailUrl.startsWith('blob:') ? '' : img.thumbnailUrl,
+              previewUrl: img.previewUrl.startsWith('blob:') ? '' : img.previewUrl,
+            }))
+          : project.images
+      }));
+    } catch (error) {
+      console.error('加载项目数据失败:', error);
+      return initialProjects;
+    }
+  };
+
+  // 保存项目数据到localStorage
+  const saveProjectsToStorage = (projects: Project[]): void => {
+    try {
+      // 序列化项目数据
+      const serialized = JSON.stringify(projects);
+      localStorage.setItem(STORAGE_KEY, serialized);
+    } catch (error) {
+      console.error('保存项目数据失败:', error);
+    }
+  };
+
+  const [projects, setProjects] = useState<Project[]>(() => loadProjectsFromStorage());
+
+  // 监听projects变化并保存到localStorage
+  useEffect(() => {
+    if (projects.length > 0) {
+      saveProjectsToStorage(projects);
+    }
+  }, [projects]);
+
+  // 组件卸载时清理对象URL
+  useEffect(() => {
+    return () => {
+      uploadService.revokeAllObjectURLs();
+    };
+  }, []);
+
   const [showModal, setShowModal] = useState(false);
   const [viewMode, setViewMode] = useState<'all' | 'prototypes'>('all');
   const [newProject, setNewProject] = useState({
